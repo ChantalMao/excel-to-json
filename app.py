@@ -6,7 +6,7 @@ import time
 import os
 
 # --- 1. 配置区域 ---
-st.set_page_config(page_title="广告分析 Gem (API版)", layout="wide")
+st.set_page_config(page_title="GMV 全链路分析 (严格版)", layout="wide")
 
 # (A) API Key 配置
 if "GEMINI_API_KEY" in st.secrets:
@@ -17,24 +17,34 @@ else:
 
 genai.configure(api_key=api_key)
 
-# (B) 【关键】在这里粘贴你 Gem 的指令！
-# 注意：一定要保留首尾的三个引号，不要误删！
+# (B) System Instruction (Prompt)
+# ⚠️ 注意：保留首尾的三个引号
 GEM_SYSTEM_INSTRUCTION = """
-你是一位资深的广告投放分析专家。
-请根据用户上传的 Excel 数据（JSON格式）和广告素材（图片/视频），进行深度归因分析。
-分析数据趋势，结合素材内容，给出具体的优化建议。
+你是一位资深的电商广告投放分析专家。
+你的任务是基于用户上传的“完整数据包”（Excel数据 + 封面图 + 视频）进行深度归因分析。
+
+【分析逻辑】
+1. **数据诊断**：根据 Excel (JSON) 数据，指出消耗、GMV、ROI 的关键表现和波动。
+2. **素材归因**：
+   - 结合视频的前3秒内容、BGM、节奏，分析为什么这个视频在这个数据表现下是好/坏的。
+   - 结合封面图，分析点击率 (CTR) 与封面的关系。
+3. **结论与建议**：不要模棱两可，直接给出“继续放量”、“暂停”、“修改开头”等具体指令。
+
+输出风格：专业、直接、行动导向。
 """
 
-st.title("🚀 广告分析 Gem (API集成版)")
+st.title("🚀 GMV 全链路分析 (数据+图+视)")
 
-# --- 2. 侧边栏：上传区 ---
+# --- 2. 侧边栏：上传区 (全必填) ---
 with st.sidebar:
-    st.header("📂 素材与数据上传")
-    uploaded_excel = st.file_uploader("1. 上传 Excel 报表", type=["xlsx", "xls"])
-    uploaded_image = st.file_uploader("2. 上传广告封面/截图 (可选)", type=["png", "jpg", "jpeg"])
-    uploaded_video = st.file_uploader("3. 上传广告视频 (可选)", type=["mp4", "mov"])
+    st.header("📂 资料上传 (全部必填)")
     
-    analyze_btn = st.button("开始分析", type="primary")
+    uploaded_excel = st.file_uploader("1. Excel 报表", type=["xlsx", "xls"])
+    uploaded_image = st.file_uploader("2. 广告封面图", type=["png", "jpg", "jpeg", "webp"])
+    uploaded_video = st.file_uploader("3. 广告视频", type=["mp4", "mov", "avi"])
+    
+    st.divider()
+    analyze_btn = st.button("🚀 开始联合分析", type="primary")
 
 # --- 3. 功能函数 ---
 def process_excel_data(file):
@@ -43,7 +53,6 @@ def process_excel_data(file):
         xls = pd.ExcelFile(file)
         data_bundle = {}
         
-        # 定义你要提取的 Sheet 关键词映射
         target_sheets = {
             "分时段数据": "分时段表现",
             "商品-gmv max": "商品GMV明细",
@@ -56,7 +65,6 @@ def process_excel_data(file):
             for key, alias in target_sheets.items():
                 if key in clean_name:
                     df = pd.read_excel(xls, sheet_name=sheet_name)
-                    # 转换为 JSON 对象
                     data_bundle[alias] = df.to_dict(orient='records')
                     found = True
         
@@ -79,14 +87,11 @@ def upload_media(file, mime_type):
 
 def wait_for_video(file_obj):
     """等待视频处理完成"""
-    if not file_obj:
-        return False
-        
+    if not file_obj: return False
     with st.spinner(f"正在转码视频: {file_obj.name}..."):
         while file_obj.state.name == "PROCESSING":
             time.sleep(2)
             file_obj = genai.get_file(file_obj.name)
-        
         if file_obj.state.name != "ACTIVE":
             st.error("视频处理失败，请重试。")
             return False
@@ -94,49 +99,6 @@ def wait_for_video(file_obj):
 
 # --- 4. 主程序 ---
 if analyze_btn:
-    if not uploaded_excel:
-        st.warning("⚠️ 请先上传 Excel 文件！")
-    else:
-        # 1. 处理数据
-        json_data = process_excel_data(uploaded_excel)
-        
-        if not json_data:
-            st.error("❌ Excel 中未找到指定的数据 Sheet (分时段/商品/素材)。")
-        else:
-            col1, col2 = st.columns([1, 1])
-            
-            # 2. 准备 Prompt 内容
-            user_content = [f"这是今天的投放数据(JSON版)：\n{json_data}\n\n请结合附带的素材进行分析。"]
-            
-            # 3. 处理素材
-            with col1:
-                st.subheader("📊 数据与素材")
-                st.success("Excel 数据已解析")
-                
-                if uploaded_image:
-                    img_file = upload_media(uploaded_image, "image/jpeg")
-                    if img_file:
-                        user_content.append(img_file)
-                        st.image(uploaded_image, caption="图片素材", use_column_width=True)
-                    
-                if uploaded_video:
-                    vid_file = upload_media(uploaded_video, "video/mp4")
-                    if vid_file and wait_for_video(vid_file):
-                        user_content.append(vid_file)
-                        st.video(uploaded_video)
-
-            # 4. 调用 AI
-            with col2:
-                st.subheader("💡 智能分析结果")
-                try:
-                    model = genai.GenerativeModel(
-                        model_name="gemini-1.5-flash",
-                        system_instruction=GEM_SYSTEM_INSTRUCTION
-                    )
-                    
-                    with st.spinner("Gemini 正在分析数据与视频细节..."):
-                        response = model.generate_content(user_content)
-                        st.markdown(response.text)
-                        
-                except Exception as e:
-                    st.error(f"分析出错: {e}")
+    # ❌ 严格校验：缺一不可
+    if not (uploaded_excel and uploaded_image and uploaded_video):
+        st.error("⚠️ 资料不
