@@ -67,4 +67,20 @@ if uploaded_file is not None:
 
         # --- 结果处理 ---
         if converted_count == 0:
-            st.warning("⚠️ 未找到指定的 Sheet (
+            # 修复点：这里改成了多行安全写法，防止报错
+            st.warning(
+                "⚠️ 未找到指定的 Sheet (分时段数据 / 商品-gmv max / 素材-gmv max)。"
+                "请检查 Excel 文件。"
+            )
+        else:
+            st.divider()
+            zip_buffer.seek(0)
+            st.download_button(
+                label=f"⬇️ 下载 {converted_count} 个文件的压缩包",
+                data=zip_buffer,
+                file_name=f"json_output_{user_suffix}.zip",
+                mime="application/zip"
+            )
+        
+    except Exception as e:
+        st.error(f"❌ 发生错误: {e}")
