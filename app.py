@@ -119,18 +119,20 @@ GEM_SYSTEM_INSTRUCTION = """
 | 0-3s | 黄金开头 | ... | ... |
 | 3-10s | 痛点/展示 | ... | ... |
 | 10s+ | 引导下单 | ... | ... |
-st.title("TTS广告分析报告")
+"""
+
+st.title("🚀 GMV 全链路分析 (数据+图+视)")
 
 # --- 2. 侧边栏：上传区 (全必填) ---
 with st.sidebar:
     st.header("📂 资料上传 (全部必填)")
     
-    uploaded_excel = st.file_uploader("1. 周期性复盘报告", type=["xlsx", "xls"])
-    uploaded_image = st.file_uploader("2. 商品主图", type=["png", "jpg", "jpeg", "webp"])
-    uploaded_video = st.file_uploader("3. 低绩效视频", type=["mp4", "mov", "avi"])
+    uploaded_excel = st.file_uploader("1. Excel 报表", type=["xlsx", "xls"])
+    uploaded_image = st.file_uploader("2. 广告封面图", type=["png", "jpg", "jpeg", "webp"])
+    uploaded_video = st.file_uploader("3. 广告视频", type=["mp4", "mov", "avi"])
     
     st.divider()
-    analyze_btn = st.button("开始分析", type="primary")
+    analyze_btn = st.button("🚀 开始联合分析", type="primary")
 
 # --- 3. 功能函数 ---
 def process_excel_data(file):
@@ -228,7 +230,7 @@ if analyze_btn:
                 st.subheader("💡 深度分析报告")
                 try:
                     model = genai.GenerativeModel(
-                        model_name="gemini-1.5-flash",
+                        model_name="gemini-2.5-pro",
                         system_instruction=GEM_SYSTEM_INSTRUCTION
                     )
                     
