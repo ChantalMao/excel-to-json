@@ -6,7 +6,7 @@ import time
 import os
 
 # --- 1. 配置区域 ---
-st.set_page_config(page_title="GMV 全链路分析 (严格版)", layout="wide")
+st.set_page_config(page_title="TTS广告分析", layout="wide")
 
 # (A) API Key 配置
 if "GEMINI_API_KEY" in st.secrets:
@@ -121,18 +121,18 @@ GEM_SYSTEM_INSTRUCTION = """
 | 10s+ | 引导下单 | ... | ... |
 """
 
-st.title("🚀 GMV 全链路分析 (数据+图+视)")
+st.title("TTS广告分析")
 
 # --- 2. 侧边栏：上传区 (全必填) ---
 with st.sidebar:
     st.header("📂 资料上传 (全部必填)")
     
-    uploaded_excel = st.file_uploader("1. Excel 报表", type=["xlsx", "xls"])
-    uploaded_image = st.file_uploader("2. 广告封面图", type=["png", "jpg", "jpeg", "webp"])
-    uploaded_video = st.file_uploader("3. 广告视频", type=["mp4", "mov", "avi"])
+    uploaded_excel = st.file_uploader("1.周期性复盘报告", type=["xlsx", "xls"])
+    uploaded_image = st.file_uploader("2. 商品主图", type=["png", "jpg", "jpeg", "webp"])
+    uploaded_video = st.file_uploader("3. 低绩效素材", type=["mp4", "mov", "avi"])
     
     st.divider()
-    analyze_btn = st.button("🚀 开始联合分析", type="primary")
+    analyze_btn = st.button("开始分析", type="primary")
 
 # --- 3. 功能函数 ---
 def process_excel_data(file):
