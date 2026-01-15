@@ -1,86 +1,223 @@
 import streamlit as st
 import pandas as pd
-import io
-import zipfile
+import google.generativeai as genai
+import tempfile
+import time
+import os
 
-# 设置网页标题
-st.set_page_config(page_title="Excel 转 JSON 工具 (过滤版)", layout="centered")
+# --- 1. 配置区域 ---
+st.set_page_config(page_title="广告分析 Gem (API版)", layout="wide")
 
-st.title("📊 Excel 转 JSON 工具")
-st.markdown("仅转换指定 Sheet (分时段/商品/素材)，自动忽略其他无关 Sheet。")
+# (A) API Key 配置
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+else:
+    st.error("❌ 未找到 API Key，请在 Streamlit Secrets 中配置。")
+    st.stop()
 
-# --- 侧边栏：设置 ---
-st.sidebar.header("⚙️ 命名设置")
+genai.configure(api_key=api_key)
 
-user_suffix = st.sidebar.text_input(
-    "请输入文件后缀", 
-    value="1501", 
-    help="例如输入 1501，文件名变成：分日数据_1501.json"
-)
+# (B) 【关键】在这里粘贴你 Gem 的指令！
+# 把你网页版 Gem 的 Prompt 粘贴在下面这个字符串里
+GEM_SYSTEM_INSTRUCTION = """
+# Role: TikTok Shop广告优化顾问
 
-st.sidebar.info(f"当前预览：\n\nxxx_{user_suffix}.json")
+## Profile
+你是一名拥有丰富实战经验的TikTok Shop广告优化顾问。你的核心能力在于通过数据通过GMV MAX投放逻辑，诊断广告账户，并给出接地气、可落地的优化建议。
 
-# --- 主界面：文件上传 ---
-uploaded_file = st.file_uploader("请上传 Excel 文件 (.xlsx)", type=["xlsx", "xls"])
+## Tone & Style Guidelines (语言与风格准则)
+1.  **对象适配**：你的读者是中小商家，请使用**简单、直白、专业**的语言。避免使用复杂的营销黑话（Jargon），必须使用术语时请简要解释。
+2.  **客观克制**：严禁使用夸大、煽动性或极端的形容词（如：由“爆炸式增长”、“完美”、“极好”、“顶级”改为“显著提升”、“有效”、“表现良好”、“具有潜力”）。保持顾问的冷静与客观。
+3.  **结构清晰**：使用表格和项目符号，确保客户一眼能看懂重点。
 
-if uploaded_file is not None:
-    try:
-        excel_file = pd.ExcelFile(uploaded_file)
-        sheet_names = excel_file.sheet_names
+## Input Data Context (我将提供的资料)
+1.  **广告数据-分日数据** (JSON): 包含账户整体的日期、花费、ROAS等趋势。
+2.  **广告数据-商品维度数据** (JSON): 包含不同商品的ID、标题、花费(Cost)、ROAS等。
+3.  **广告数据-素材明细数据** (JSON): VideoId, 状态, 花费, CTR, CVR等。
+4.  **商品主图** (图片附件): 对应重点商品的图片。
+5.  **视频素材** (视频文件): 需要优化的低绩效或待分析视频。
+
+## Critical Execution Logic (执行逻辑 - 必须严格遵守)
+**步骤一：自动背景识别 (Context Extraction)**
+在开始分析前，你必须先执行以下推理，确立分析背景：
+* **锁定核心商品**：读取【广告数据-商品维度数据】，找出**消耗（Cost）最高**的那一款商品。后续的“商品呈现分析”将专门针对此商品进行。
+* **识别品类**：分析上述“核心商品”的标题关键词，推断其所属的垂直大类（例如：女装、3C配件、美妆个护、家居用品）。
+* **识别市场**：分析提供的【视频素材】，根据视频中的**口播语言/字幕语言**，推断目标投放市场（例如：英语->欧美/东南亚英语区；泰语->泰国；越南语->越南）。
+
+**步骤二：数据清洗与ID处理**
+* **完整ID原则**：输出任何Video ID或Product ID时，必须**完整输出字符串**，严禁使用科学计数法（如1.23E+10）或省略号。
+
+---
+
+## Report Output (请严格按照以下结构生成报告)
+
+### 客户背景概览 (由AI自动提取)
+* **推测投放品类**：[填入根据高消耗商品标题推断的大类]
+* **推测投放市场**：[填入根据视频语言推断的地区]
+* **核心分析商品**：[填入高消耗商品的标题]
+
+### 一、 核心优化建议 (Action Plan)
+基于全盘分析，提供3-5个最关键、客户能立即执行的动作。
+* (请使用项目符号，语言简练，优先排序高价值动作)
+* ...
+
+### 二、 整体投放诊断
+**1. 趋势分析**
+简要分析ROAS、花费、CVR的波动。关注是否存在“周末效应”或特定日期的异常。
+
+**2. 关键洞察**
+* 花费与ROAS的相关性分析。
+* 基于数据的客观评价（避免使用“极好”等词汇）。
+
+### 三、 核心商品呈现分析 (针对消耗TOP 1商品)
+**1. 标题诊断**
+* **当前标题**：[自动填入消耗最高的商品标题]
+* **问题诊断**：(例如：关键词堆砌、未包含核心卖点、只有型号无品类名等)
+* **优化方案**：(提供2个优化后的标题，要求包含品类大词+核心卖点，通俗易懂)
+
+**2. 主图诊断**
+* **分析对象**：(请结合附件中的商品主图进行分析)
+* **视觉建议**：(例如：背景杂乱建议纯白底、缺乏使用场景建议增加模特图、卖点不突出建议增加贴片文案)
+
+### 四、 素材与内容深度诊断
+
+**1. 素材绩效象限分析 (表格)**
+基于【素材明细数据】，将素材分类。
+* **ID显示注意**：Video ID必须完整显示。
+
+| 素材类型 | 定义标准 | 典型Video ID (完整) | 建议操作 |
+| :--- | :--- | :--- | :--- |
+| 明星素材 | 高花费/高ROAS | ... | 保持预算/尝试拓量 |
+| 问题素材 | 高花费/低ROAS | ... | 降价/暂停/优化前3秒 |
+| 潜力素材 | 低花费/高ROAS | ... | 逐步提价测试 |
+| 待淘汰素材 | 低花费/低ROAS | ... | 立即关停 |
+
+**2. 低绩效视频深度归因**
+针对提供的具体视频文件进行分析。
+*重点分析为何该视频投放效果不佳。*
+
+| 时间点 | 画面内容 | 文案/旁白 | 问题分析 (客观描述) | 优化建议 (可执行) |
+| :--- | :--- | :--- | :--- | :--- |
+| 0-3秒 | ... | ... | ... | ... |
+| 中段 | ... | ... | ... | ... |
+| 结尾 | ... | ... | ... | ... |
+
+* **失败核心归因**：用一句话总结该视频转化差的原因（如：完播率低导致无转化，或引导下单不明确）。
+
+### 五、 爆款脚本参考 (SME适用版)
+**1. 市场洞察**
+基于你推断的[品类]和[市场]，简述该地区用户的基本偏好。
+
+**2. 简易爆款公式**
+为客户提供一个低成本、易上手的拍摄脚本模板。
+
+| 时间 | 阶段 | 画面建议 (低成本方案) | 文案示例 |
+| :--- | :--- | :--- | :--- |
+| 0-3s | 黄金开头 | ... | ... |
+| 3-10s | 痛点/展示 | ... | ... |
+| 10s+ | 引导下单 | ... | ... |
+
+st.title("🚀 广告分析 Gem (API集成版)")
+
+# --- 2. 侧边栏：上传区 ---
+with st.sidebar:
+    st.header("📂 素材与数据上传")
+    uploaded_excel = st.file_uploader("1. 上传 Excel 报表", type=["xlsx", "xls"])
+    uploaded_image = st.file_uploader("2. 上传广告封面/截图 (可选)", type=["png", "jpg", "jpeg"])
+    uploaded_video = st.file_uploader("3. 上传广告视频 (可选)", type=["mp4", "mov"])
+    
+    analyze_btn = st.button("开始分析", type="primary")
+
+# --- 3. 功能函数 ---
+def process_excel_data(file):
+    """提取 Excel 中的关键 Sheet 并转 JSON"""
+    xls = pd.ExcelFile(file)
+    data_bundle = {}
+    
+    # 定义你要提取的 Sheet 关键词映射
+    target_sheets = {
+        "分时段数据": "分时段表现",
+        "商品-gmv max": "商品GMV明细",
+        "素材-gmv max": "素材GMV明细"
+    }
+    
+    found = False
+    for sheet_name in xls.sheet_names:
+        clean_name = sheet_name.strip()
+        for key, alias in target_sheets.items():
+            if key in clean_name:
+                df = pd.read_excel(xls, sheet_name=sheet_name)
+                # 转换为 JSON 对象
+                data_bundle[alias] = df.to_dict(orient='records')
+                found = True
+    
+    return str(data_bundle) if found else None
+
+def upload_media(file, mime_type):
+    """上传媒体文件到 Gemini"""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.name.split('.')[-1]}") as tmp:
+        tmp.write(file.getvalue())
+        tmp_path = tmp.name
+    
+    g_file = genai.upload_file(tmp_path, mime_type=mime_type)
+    os.remove(tmp_path)
+    return g_file
+
+def wait_for_video(file_obj):
+    """等待视频处理完成"""
+    with st.spinner(f"正在转码视频: {file_obj.name}..."):
+        while file_obj.state.name == "PROCESSING":
+            time.sleep(2)
+            file_obj = genai.get_file(file_obj.name)
+        if file_obj.state.name != "ACTIVE":
+            st.error("视频处理失败")
+            return False
+    return True
+
+# --- 4. 主程序 ---
+if analyze_btn and uploaded_excel:
+    # 1. 处理数据
+    json_data = process_excel_data(uploaded_excel)
+    
+    if not json_data:
+        st.error("❌ Excel 中未找到指定的数据 Sheet (分时段/商品/素材)。")
+        st.stop()
         
-        st.success(f"✅ 文件读取成功，正在筛选目标 Sheet...")
-
-        # 创建内存 ZIP
-        zip_buffer = io.BytesIO()
-        converted_count = 0
-
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for sheet_name in sheet_names:
-                clean_name = sheet_name.strip()
-                base_name = None
-
-                # --- 筛选与重命名逻辑 ---
-                # 只有匹配到以下关键词才处理，否则跳过
-                if "分时段数据" in clean_name:
-                    base_name = "分日数据"
-                elif "商品-gmv max" in clean_name:
-                    base_name = "商品明细数据"
-                elif "素材-gmv max" in clean_name:
-                    base_name = "素材明细数据"
-                else:
-                    # 如果不是这三个，直接跳过
-                    continue
-
-                # --- 开始转换 ---
-                df = pd.read_excel(excel_file, sheet_name=sheet_name)
-                
-                # 拼接文件名
-                json_filename = f"{base_name}_{user_suffix}.json"
-                
-                # 转换为 JSON
-                json_str = df.to_json(orient='records', force_ascii=False, indent=4)
-                
-                # 写入 ZIP
-                zip_file.writestr(json_filename, json_str)
-                converted_count += 1
-                st.write(f"🔹 已转换: `{sheet_name}` -> `{json_filename}`")
-
-        # --- 结果处理 ---
-        if converted_count == 0:
-            # 修复点：这里改成了多行安全写法，防止报错
-            st.warning(
-                "⚠️ 未找到指定的 Sheet (分时段数据 / 商品-gmv max / 素材-gmv max)。"
-                "请检查 Excel 文件。"
-            )
-        else:
-            st.divider()
-            zip_buffer.seek(0)
-            st.download_button(
-                label=f"⬇️ 下载 {converted_count} 个文件的压缩包",
-                data=zip_buffer,
-                file_name=f"json_output_{user_suffix}.zip",
-                mime="application/zip"
-            )
+    col1, col2 = st.columns([1, 1])
+    
+    # 2. 准备 Prompt 内容
+    # 这里是【用户当前的一轮输入】，它会和上面的【System Instruction】结合
+    user_content = [f"这是今天的投放数据(JSON版)：\n{json_data}\n\n请结合附带的素材进行分析。"]
+    
+    # 3. 处理素材
+    with col1:
+        st.subheader("📊 数据与素材")
+        st.success("Excel 数据已解析")
         
-    except Exception as e:
-        st.error(f"❌ 发生错误: {e}")
+        if uploaded_image:
+            img_file = upload_media(uploaded_image, "image/jpeg")
+            user_content.append(img_file)
+            st.image(uploaded_image, caption="图片素材", use_column_width=True)
+            
+        if uploaded_video:
+            vid_file = upload_media(uploaded_video, "video/mp4")
+            if wait_for_video(vid_file):
+                user_content.append(vid_file)
+                st.video(uploaded_video)
+
+    # 4. 调用 AI
+    with col2:
+        st.subheader("💡 智能分析结果")
+        try:
+            # 初始化模型，注入你的 Gem 指令 (System Instruction)
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=GEM_SYSTEM_INSTRUCTION
+            )
+            
+            with st.spinner("Gemini 正在分析数据与视频细节..."):
+                response = model.generate_content(user_content)
+                st.markdown(response.text)
+                
+        except Exception as e:
+            st.error(f"分析出错: {e}")
