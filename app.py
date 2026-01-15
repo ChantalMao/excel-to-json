@@ -12,7 +12,10 @@ st.set_page_config(page_title="GMV 全链路分析 (严格版)", layout="wide")
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
-    st.error("❌ 未找到 API Key，请在 Streamlit Secrets 中配置。")
+    # 这里改成了安全写法
+    st.error(
+        "❌ 未找到 API Key，请在 Streamlit Settings -> Secrets 中配置 GEMINI_API_KEY。"
+    )
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -33,7 +36,7 @@ GEM_SYSTEM_INSTRUCTION = """
 输出风格：专业、直接、行动导向。
 """
 
-st.title("🚀 GMV 全链路分析 (数据+图+视)")
+st.title("TTS广告分析报告")
 
 # --- 2. 侧边栏：上传区 (全必填) ---
 with st.sidebar:
@@ -101,4 +104,54 @@ def wait_for_video(file_obj):
 if analyze_btn:
     # ❌ 严格校验：缺一不可
     if not (uploaded_excel and uploaded_image and uploaded_video):
-        st.error("⚠️ 资料不
+        # 修复点：这里改成了多行写法，防止复制时断行报错
+        st.error(
+            "⚠️ 资料不全！请必须同时上传：Excel、图片 和 视频。"
+        )
+    else:
+        # 1. 处理数据
+        json_data = process_excel_data(uploaded_excel)
+        
+        if not json_data:
+            st.error("❌ Excel 中未找到指定的数据 Sheet (分时段/商品/素材)。")
+        else:
+            col1, col2 = st.columns([1, 1])
+            
+            # 2. 准备内容
+            user_content = [
+                f"这是投放数据(JSON)：\n{json_data}\n\n请结合图片和视频进行联合分析。",
+            ]
+            
+            # 3. 处理素材上传
+            with col1:
+                st.subheader("📊 素材预览")
+                
+                # 图片
+                st.info("上传图片...")
+                img_file = upload_media(uploaded_image, "image/jpeg")
+                if img_file:
+                    user_content.append(img_file)
+                    st.image(uploaded_image, caption="封面图", use_column_width=True)
+                
+                # 视频
+                st.info("上传视频并转码...")
+                vid_file = upload_media(uploaded_video, "video/mp4")
+                if vid_file and wait_for_video(vid_file):
+                    user_content.append(vid_file)
+                    st.video(uploaded_video)
+
+            # 4. 调用 AI
+            with col2:
+                st.subheader("💡 深度分析报告")
+                try:
+                    model = genai.GenerativeModel(
+                        model_name="gemini-1.5-flash",
+                        system_instruction=GEM_SYSTEM_INSTRUCTION
+                    )
+                    
+                    with st.spinner("正在对比数据与素材细节..."):
+                        response = model.generate_content(user_content)
+                        st.markdown(response.text)
+                        
+                except Exception as e:
+                    st.error(f"分析出错: {e}")
