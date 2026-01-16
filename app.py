@@ -170,7 +170,7 @@ if st.session_state.current_task_id is None:
                 # 3. 初始化 Gemini
                 try:
                     model = genai.GenerativeModel(
-                        model_name="gemini-1.5-flash",
+                        model_name="gemini-2.5-pro",
                         system_instruction=GEM_SYSTEM_INSTRUCTION
                     )
                     chat = model.start_chat(history=[])
