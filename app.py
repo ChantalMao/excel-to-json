@@ -84,17 +84,7 @@ def upload_media(file, mime_type):
         return g_file
     except: return None
 
-def wait_for_video(file_obj):
-    """等待视频处理"""
-    if not file_obj: return False
-    with st.spinner(f"正在后台处理视频数据..."):
-        while file_obj.state.name == "PROCESSING":
-            time.sleep(2)
-            file_obj = genai.get_file(file_obj.name)
-        if file_obj.state.name != "ACTIVE": return False
-    return True
-
-# --- 4. 侧边栏：任务导航 (已修复报错) ---
+# --- 4. 侧边栏：任务导航 ---
 with st.sidebar:
     st.title("🗂️ 工作台")
     
@@ -107,27 +97,23 @@ with st.sidebar:
     st.subheader("历史记录")
     
     # 获取任务列表并排序
-    # 修复点：确保这里是一行完整的代码
     tasks = sorted(list(st.session_state.sessions.keys()), reverse=True)
     
     if not tasks:
         st.caption("暂无历史任务")
     
     for t_id in tasks:
-        # 判断是否是当前选中的任务
         label = f"📂 {t_id}"
         if t_id == st.session_state.current_task_id:
             label = f"🟢 {t_id} (当前)"
             
-        # 生成按钮
         if st.button(label, key=f"btn_{t_id}", use_container_width=True):
             st.session_state.current_task_id = t_id
             st.rerun()
 
 # --- 5. 主界面逻辑 ---
 
-# SCENE 1: 新建任务界面
-# SCENE 1: 新建任务界面
+# SCENE 1: 新建任务界面 (如果当前ID为空)
 if st.session_state.current_task_id is None:
     st.title("🚀 新建分析任务")
     st.caption("上传素材后，系统将自动创建新会话")
@@ -144,73 +130,68 @@ if st.session_state.current_task_id is None:
         st.markdown("""
         - 点击 **开始分析** 后，系统会自动生成任务 ID (如 0116-01)。
         - 图片和视频将**不再预览**，直接在后台处理。
-        - 你可以随时在左侧栏切换回历史任务。
+        - 分析过程可能需要 30-60秒，请耐心等待。
         """)
         
         start_btn = st.button("🚀 开始分析", type="primary", use_container_width=True)
 
-    # 注意：下面这行 if 必须和上面的 with col2 保持同级缩进（也就是比最左边缩进4个空格）
     if start_btn:
         if not (uploaded_excel and uploaded_image and uploaded_video):
             st.error("⚠️ 资料不全！请必须同时上传：Excel、图片 和 视频。")
         else:
-            # 使用 st.status 显示详细步骤
             with st.status("🚀 正在启动任务...", expanded=True) as status:
                 
-                # --- STEP 1: Excel ---
+                # 1. 解析 Excel
                 status.write("📊 1/4 正在解析 Excel 数据...")
                 json_data = process_excel_data(uploaded_excel)
                 if not json_data:
                     status.update(label="❌ Excel 解析失败", state="error")
-                    st.error("Excel 未找到指定 Sheet，请检查文件。")
+                    st.error("Excel 未找到指定 Sheet。")
                     st.stop()
                 time.sleep(0.5)
 
-                # --- STEP 2: 图片 ---
+                # 2. 上传图片
                 status.write("🖼️ 2/4 正在上传图片...")
                 img_file = upload_media(uploaded_image, "image/jpeg")
                 if not img_file:
                     status.update(label="❌ 图片上传失败", state="error")
                     st.stop()
 
-                # --- STEP 3: 视频 ---
+                # 3. 上传视频
                 status.write("🎥 3/4 正在上传视频 (大文件耗时较长)...")
                 vid_file = upload_media(uploaded_video, "video/mp4")
-                
                 if not vid_file:
                     status.update(label="❌ 视频上传失败", state="error")
                     st.stop()
                 
-                # 视频转码等待逻辑 (带超时控制)
-                status.write("⏳ 4/4 等待 Google 视频转码 (最长等待 60秒)...")
+                # 4. 等待视频转码 (带超时)
+                status.write("⏳ 4/4 等待 Google 视频转码 (最长 60s)...")
                 is_processed = False
                 wait_seconds = 0
                 progress_bar = st.progress(0)
                 
                 while wait_seconds < 60:
                     file_check = genai.get_file(vid_file.name)
-                    
                     if file_check.state.name == "ACTIVE":
                         is_processed = True
                         progress_bar.progress(100)
                         break
                     elif file_check.state.name == "FAILED":
                         status.update(label="❌ 视频转码失败", state="error")
-                        st.error("Google 无法处理该视频，请尝试压缩或转换格式。")
                         st.stop()
                     
                     time.sleep(2)
                     wait_seconds += 2
                     progress_bar.progress(min(wait_seconds * 1.5, 95))
-                    status.write(f"⏳ Google 正在转码中... 已耗时 {wait_seconds} 秒")
+                    status.write(f"⏳ Google 转码中... {wait_seconds}s")
 
                 if not is_processed:
                     status.update(label="❌ 视频处理超时", state="error")
-                    st.error("视频处理超时，请尝试上传更小的视频。")
+                    st.error("视频处理超时，请压缩视频大小。")
                     st.stop()
 
-                # --- STEP 4: 启动 AI ---
-                status.write("🤖 素材就绪，正在呼叫 Gemini...")
+                # 5. 呼叫 Gemini
+                status.write("🤖 素材就绪，正在生成分析报告...")
                 try:
                     model = genai.GenerativeModel(
                         model_name="gemini-1.5-flash",
@@ -245,14 +226,10 @@ if st.session_state.current_task_id is None:
                     status.update(label="❌ AI 分析出错", state="error")
                     st.error(f"API 错误: {e}")
 
-# SCENE 2: 历史任务详情页 (这里是 else，不要动)
-else:
-
-# SCENE 2: 历史任务详情页
+# SCENE 2: 历史任务详情页 (Chat 界面)
 else:
     task_id = st.session_state.current_task_id
     
-    # 容错校验
     if task_id not in st.session_state.sessions:
         st.session_state.current_task_id = None
         st.rerun()
@@ -263,24 +240,6 @@ else:
     
     st.title(f"📂 任务详情: {task_id}")
     
-    # 1. 显示历史
+    # 显示历史
     for msg in history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-            
-    # 2. 对话输入
-    if prompt := st.chat_input("输入修正指令..."):
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        history.append({"role": "user", "content": prompt})
-        
-        try:
-            with st.spinner("Gemini 正在思考..."):
-                response = chat_session.send_message(prompt)
-                with st.chat_message("model"):
-                    st.markdown(response.text)
-                history.append({"role": "model", "content": response.text})
-                # 强制保存
-                st.session_state.sessions[task_id]["history"] = history
-        except Exception as e:
-            st.error(f"回复出错: {e}")
+        with st.chat_message
