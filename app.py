@@ -148,34 +148,76 @@ if st.session_state.current_task_id is None:
         
         start_btn = st.button("🚀 开始分析", type="primary", use_container_width=True)
 
-    if start_btn:
+  if start_btn:
         if not (uploaded_excel and uploaded_image and uploaded_video):
             st.error("⚠️ 资料不全！请必须同时上传：Excel、图片 和 视频。")
         else:
-            with st.spinner("🔄 正在解析数据并上传素材 (无需预览)..."):
-                # 1. 解析 Excel
+            # 使用 st.status 显示详细步骤 (Streamlit 新特性)
+            with st.status("🚀 正在启动任务...", expanded=True) as status:
+                
+                # --- STEP 1: Excel ---
+                status.write("📊 1/4 正在解析 Excel 数据...")
                 json_data = process_excel_data(uploaded_excel)
                 if not json_data:
-                    st.error("❌ Excel 解析失败，未找到指定 Sheet。")
+                    status.update(label="❌ Excel 解析失败", state="error")
+                    st.error("Excel 未找到指定 Sheet，请检查文件。")
+                    st.stop()
+                time.sleep(0.5) # 给一点视觉反馈
+
+                # --- STEP 2: 图片 ---
+                status.write("🖼️ 2/4 正在上传图片...")
+                img_file = upload_media(uploaded_image, "image/jpeg")
+                if not img_file:
+                    status.update(label="❌ 图片上传失败", state="error")
                     st.stop()
 
-                # 2. 上传素材
-                img_file = upload_media(uploaded_image, "image/jpeg")
+                # --- STEP 3: 视频 (最容易卡的地方) ---
+                status.write("🎥 3/4 正在上传视频 (大文件耗时较长)...")
                 vid_file = upload_media(uploaded_video, "video/mp4")
                 
-                if not (img_file and vid_file and wait_for_video(vid_file)):
-                    st.error("❌ 素材上传或处理失败，请重试。")
+                if not vid_file:
+                    status.update(label="❌ 视频上传失败", state="error")
+                    st.stop()
+                
+                # 视频转码等待逻辑 (带超时控制)
+                status.write("⏳ 4/4 等待 Google 视频转码 (最长等待 60秒)...")
+                is_processed = False
+                wait_seconds = 0
+                progress_bar = st.progress(0)
+                
+                while wait_seconds < 60: # 设置 60秒 超时
+                    # 获取最新状态
+                    file_check = genai.get_file(vid_file.name)
+                    
+                    if file_check.state.name == "ACTIVE":
+                        is_processed = True
+                        progress_bar.progress(100)
+                        break
+                    elif file_check.state.name == "FAILED":
+                        status.update(label="❌ 视频转码失败", state="error")
+                        st.error("Google 无法处理该视频格式，请尝试转换格式或压缩大小。")
+                        st.stop()
+                    
+                    # 还在处理中...
+                    time.sleep(2)
+                    wait_seconds += 2
+                    progress_bar.progress(min(wait_seconds * 1.5, 95)) # 模拟进度
+                    status.write(f"⏳ Google 正在转码中... 已耗时 {wait_seconds} 秒")
+
+                if not is_processed:
+                    status.update(label="❌ 视频处理超时", state="error")
+                    st.error("视频处理超过 60 秒，建议：1. 压缩视频大小; 2. 缩短视频时长。")
                     st.stop()
 
-                # 3. 初始化 Gemini
+                # --- STEP 4: 启动 AI ---
+                status.write("🤖 所有素材准备就绪，正在呼叫 Gemini...")
                 try:
                     model = genai.GenerativeModel(
-                        model_name="gemini-2.5-pro",
+                        model_name="gemini-1.5-flash",
                         system_instruction=GEM_SYSTEM_INSTRUCTION
                     )
                     chat = model.start_chat(history=[])
                     
-                    # 4. 发送初始内容
                     initial_content = [
                         f"这是投放数据(JSON)：\n{json_data}\n\n请结合图片和视频进行分析。",
                         img_file,
@@ -184,7 +226,7 @@ if st.session_state.current_task_id is None:
                     
                     response = chat.send_message(initial_content)
                     
-                    # 5. 创建并保存任务
+                    # 创建任务
                     new_task_id = generate_task_id()
                     st.session_state.sessions[new_task_id] = {
                         "chat": chat,
@@ -195,10 +237,13 @@ if st.session_state.current_task_id is None:
                     }
                     
                     st.session_state.current_task_id = new_task_id
+                    status.update(label="✅ 分析完成！正在跳转...", state="complete")
+                    time.sleep(1)
                     st.rerun()
                     
                 except Exception as e:
-                    st.error(f"分析出错: {e}")
+                    status.update(label="❌ AI 分析出错", state="error")
+                    st.error(f"API 错误: {e}")
 
 # SCENE 2: 历史任务详情页
 else:
