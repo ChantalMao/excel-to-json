@@ -230,6 +230,7 @@ if st.session_state.current_task_id is None:
 else:
     task_id = st.session_state.current_task_id
     
+    # 容错：如果ID不存在（比如重启应用后），重置
     if task_id not in st.session_state.sessions:
         st.session_state.current_task_id = None
         st.rerun()
@@ -240,6 +241,33 @@ else:
     
     st.title(f"📂 任务详情: {task_id}")
     
-    # 显示历史
+    # 1. 显示聊天记录
     for msg in history:
-        with st.chat_message
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+            
+    # 2. 聊天输入框
+    if prompt := st.chat_input("输入修正指令或后续问题..."):
+        # 显示用户消息
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        # 更新本地历史
+        history.append({"role": "user", "content": prompt})
+        
+        # 调用 API
+        try:
+            with st.spinner("Gemini 正在思考..."):
+                response = chat_session.send_message(prompt)
+                
+                # 显示 AI 回复
+                with st.chat_message("model"):
+                    st.markdown(response.text)
+                
+                # 更新本地历史
+                history.append({"role": "model", "content": response.text})
+                
+                # 强制保存回 session_state
+                st.session_state.sessions[task_id]["history"] = history
+                
+        except Exception as e:
+            st.error(f"回复出错: {e}")
